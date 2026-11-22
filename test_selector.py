@@ -113,5 +113,62 @@ class SelectorTests(unittest.TestCase):
         self.assertEqual(selected, {4, 9})
 
 
+    def test_scalar_field_uses_measured_reads(self):
+        source = 'class Settings:\n    FLAG = False\n'
+        data = {'sources': {'sqlglot/example.py': source}, 'lines': {}, 'modules': {}, 'reads': {}}
+        tests = [{'id':'test-a','number':9,'file':'tests/test_a.py'}, {'id':'test-b','number':4,'file':'tests/test_b.py'}]
+        usage = {'collection':['test-a','test-b'], 'classes':{'sqlglot/example.py::Settings':[0,1]}, 'symbols':{}}
+        attributes = {'collection':['test-a','test-b'], 'reads':{'sqlglot/example.py::Settings::FLAG':[1]}, 'references':{}, 'unsafe_fields':[]}
+        index = ImpactIndex(data, tests, usage, attributes)
+        self.assertEqual(index.select(patch(source, source.replace('False','True'))), {4})
+
+    def test_cached_scalar_field_keeps_constructor_dependencies(self):
+        source = 'class Settings:\n    FLAG = False\n'
+        data = {'sources': {'sqlglot/example.py': source}, 'lines': {}, 'modules': {}, 'reads': {}}
+        tests = [{'id':'test-a','number':9,'file':'tests/test_a.py'}, {'id':'test-b','number':4,'file':'tests/test_b.py'}]
+        usage = {'collection':['test-a','test-b'], 'classes':{'sqlglot/example.py::Settings':[0,1]}, 'symbols':{}}
+        attributes = {'collection':['test-a','test-b'], 'reads':{'sqlglot/example.py::Settings::FLAG':[1]}, 'references':{}, 'unsafe_fields':['FLAG']}
+        index = ImpactIndex(data, tests, usage, attributes)
+        self.assertEqual(index.select(patch(source, source.replace('False','True'))), {4,9})
+
+
+    def test_deleting_a_module_is_conservative(self):
+        index = self.make_index()
+        text = 'diff --git a/sqlglot/example.py b/sqlglot/example.py\n--- a/sqlglot/example.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-def f():\n-    return 1\n'
+        self.assertEqual(index.select(text), {4, 9})
+
+    def dictionary_index(self, unsafe=False):
+        source = "class Settings:\n    OPTIONS = {'a': 1, 'b': 2, 'unused': 3}\n"
+        data = {'sources': {'sqlglot/example.py': source}, 'lines': {}, 'modules': {}, 'reads': {}}
+        tests = [{'id': 'test-a', 'number': 9, 'file': 'tests/test_a.py'},
+                 {'id': 'test-b', 'number': 4, 'file': 'tests/test_b.py'}]
+        key = 'sqlglot/example.py::Settings::OPTIONS'
+        usage = {'collection': ['test-a', 'test-b'],
+                 'classes': {'sqlglot/example.py::Settings': [0, 1]}, 'symbols': {}}
+        reads = {'collection': ['test-a', 'test-b'], 'wrapped': [key],
+                 'reads': {key + '::s:a': [0], key + '::s:b': [1]},
+                 'wildcards': {}, 'unsafe_keys': [key + '::s:a'] if unsafe else [],
+                 'unsafe_fields': []}
+        return source, ImpactIndex(data, tests, usage, dictionary_data=reads)
+
+    def test_dictionary_value_selects_only_its_readers(self):
+        source, index = self.dictionary_index()
+        self.assertEqual(index.select(patch(source, source.replace("'a': 1", "'a': 7"))), {9})
+
+    def test_unread_dictionary_value_still_requires_import_validation(self):
+        source, index = self.dictionary_index()
+        self.assertEqual(index.select(patch(source, source.replace("'unused': 3", "'unused': 7"))), set())
+        self.assertTrue(index.import_sensitive)
+
+    def test_new_dictionary_key_uses_constructor_fallback(self):
+        source, index = self.dictionary_index()
+        changed = source.replace("'unused': 3", "'unused': 3, 'added': 4")
+        self.assertEqual(index.select(patch(source, changed)), {4, 9})
+
+    def test_import_cached_dictionary_key_uses_constructor_fallback(self):
+        source, index = self.dictionary_index(unsafe=True)
+        self.assertEqual(index.select(patch(source, source.replace("'a': 1", "'a': 7"))), {4, 9})
+
+
 if __name__ == '__main__':
     unittest.main()

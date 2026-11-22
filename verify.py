@@ -15,7 +15,10 @@ import score
 
 
 def child_limits():
-    resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
+    # A cgroup memory limit counts resident memory, not virtual reservations.
+    # DuckDB's allocator reserves address space without committing that RAM.
+    if os.environ.get('BR_PROBE') != '1':
+        resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
     if hasattr(os, 'sched_getaffinity'):
         os.sched_setaffinity(0, set(sorted(os.sched_getaffinity(0))[:2]))
 

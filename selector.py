@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 import re
 import sys
+import os
+import time
 
 HUNK = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
 
@@ -94,10 +96,37 @@ def apply_change(source, change):
     return ''.join(result)
 
 class ImpactIndex:
-    def __init__(self, data, tests):
+    def __init__(self, data, tests, usage=None, attributes=None, dictionary_data=None):
         self.all = {t['number'] for t in tests}
         self.numbers = {t['id']: t['number'] for t in tests}
         self.baseline_numbers = [self.numbers.get(nodeid) for nodeid in data.get('collection', [])]
+        self.usage_classes = {}
+        self.usage_symbols = {}
+        if usage:
+            catalogue = usage['collection']
+            self.usage_classes = {key: {self.numbers[catalogue[i]] for i in ids if catalogue[i] in self.numbers} for key, ids in usage['classes'].items()}
+            self.usage_symbols = {key: {self.numbers[catalogue[i]] for i in ids if catalogue[i] in self.numbers} for key, ids in usage['symbols'].items()}
+        self.attribute_reads = {}
+        self.attribute_references = {}
+        self.unsafe_attributes = set()
+        if attributes:
+            catalogue = attributes['collection']
+            self.attribute_reads = {key: {self.numbers[catalogue[i]] for i in ids if catalogue[i] in self.numbers} for key, ids in attributes['reads'].items()}
+            self.attribute_references = {key: {self.numbers[catalogue[i]] for i in ids if catalogue[i] in self.numbers} for key, ids in attributes.get('references', {}).items()}
+            self.unsafe_attributes = set(attributes['unsafe_fields'])
+        self.dictionary_data = dictionary_data
+        self.dictionary_wrapped = set()
+        self.dictionary_reads = {}
+        self.dictionary_wildcards = {}
+        self.dictionary_unsafe_keys = set()
+        self.dictionary_unsafe_fields = set()
+        if dictionary_data:
+            catalogue = dictionary_data['collection']
+            self.dictionary_wrapped = set(dictionary_data['wrapped'])
+            self.dictionary_unsafe_keys = set(dictionary_data['unsafe_keys'])
+            self.dictionary_unsafe_fields = set(dictionary_data['unsafe_fields'])
+            self.dictionary_reads = {key: {self.numbers[catalogue[i]] for i in ids if catalogue[i] in self.numbers} for key, ids in dictionary_data['reads'].items()}
+            self.dictionary_wildcards = {key: {self.numbers[catalogue[i]] for i in ids if catalogue[i] in self.numbers} for key, ids in dictionary_data['wildcards'].items()}
         self.by_file = {}
         for test in tests:
             self.by_file.setdefault(test['file'], set()).add(test['number'])
@@ -107,6 +136,12 @@ class ImpactIndex:
         self.reads = {p: self.translate(ids) for p, ids in data['reads'].items()}
         self.line_keys = {p: sorted(m) for p, m in self.lines.items()}
         self.trees = {}
+        self.witnesses = []
+        self.conservative = False
+        self.import_sensitive = False
+    def fallback(self):
+        self.conservative = True
+        return self.all.copy()
     def translate(self, ids):
         if ids and isinstance(ids[0], int):
             return {self.baseline_numbers[i] for i in ids if self.baseline_numbers[i] is not None}
@@ -123,14 +158,14 @@ class ImpactIndex:
     def select_python(self, change):
         path = change.old if change.old != '/dev/null' else change.new
         original = self.sources.get(path)
-        if original is None or change.new == '/dev/null':
-            return self.modules.get(path, set()) | self.by_file.get(path, set()) or self.all.copy()
+        if original is None or change.new == '/dev/null' or change.old != change.new:
+            return self.fallback()
         modified, old_tree = apply_change(original, change), self.tree(path)
         try:
             new_tree = ast.parse(modified.encode('utf-8'), filename=change.new or path, type_comments=True)
             compile(new_tree, change.new or path, 'exec', dont_inherit=True)
         except (SyntaxError, ValueError, TypeError):
-            return self.all.copy()
+            return self.fallback()
         # Parse bytes (including encoding declarations) and type comments before
         # comparing executable structure. Resource consumers remain dependencies.
         if ast.dump(old_tree, include_attributes=False) == ast.dump(new_tree, include_attributes=False):
@@ -145,11 +180,52 @@ class ImpactIndex:
             if line not in change.removed:
                 probes.update((line, max(1, line - 1)))
         unresolved = False
+        measured_empty = False
         for line in sorted(probes):
             enclosing = [n for n in functions if n.lineno < line <= n.end_lineno]
+            if enclosing and any(line < n.body[0].lineno for n in enclosing if n.body):
+                return self.fallback()
             if not enclosing:
-                # Declarations execute at import time, before test call coverage.
-                return self.all.copy()
+                self.import_sensitive = True
+                classes = [n for n in nodes if isinstance(n, ast.ClassDef) and n.lineno < line <= n.end_lineno]
+                classes.sort(key=lambda n: n.lineno)
+                if not classes or not self.usage_classes:
+                    return self.fallback()
+                qualname = '.'.join(n.name for n in classes)
+                key = path + '::' + qualname
+                constructor_users = self.usage_classes.get(key, set())
+                reference_users = self.usage_symbols.get(classes[0].name, set())
+                narrowed = None
+                declarations = [statement for statement in classes[-1].body
+                                if isinstance(statement, (ast.Assign, ast.AnnAssign))
+                                and statement.lineno <= line <= statement.end_lineno]
+                if declarations:
+                    declaration = declarations[0]
+                    if isinstance(declaration.value, ast.Dict) and self.dictionary_data:
+                        from dictionary_impact import choose
+                        narrowed = choose(self, path, qualname, declaration, new_tree)
+                    value = declaration.value
+                    if isinstance(value, ast.UnaryOp):
+                        value = value.operand
+                    targets = declaration.targets if isinstance(declaration, ast.Assign) else [declaration.target]
+                    field_names = [target.id for target in targets if isinstance(target, ast.Name)]
+                    if isinstance(value, ast.Constant) and field_names:
+                        field_groups = []
+                        for field_name in field_names:
+                            field_key = key + '::' + field_name
+                            if field_name in self.unsafe_attributes or field_key not in self.attribute_reads:
+                                break
+                            field_groups.append(self.attribute_reads[field_key] | self.attribute_references.get(field_name, set()))
+                        else:
+                            narrowed = set().union(*field_groups)
+                group = narrowed if narrowed is not None else constructor_users | reference_users
+                if narrowed is not None:
+                    measured_empty = True
+                self.witnesses.append(group)
+                selected.update(group)
+                if narrowed is None:
+                    selected.update(mapping.get(line, ()))
+                continue
             statements = [n for n in nodes if n.lineno <= line <= getattr(n, 'end_lineno', n.lineno)
                           and not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
             if statements:
@@ -159,9 +235,11 @@ class ImpactIndex:
                 keys = self.line_keys.get(path, [])
                 first = bisect_left(keys, statement.lineno)
                 if first < len(keys) and keys[first] <= getattr(statement, 'end_lineno', statement.lineno):
+                    self.witnesses.append(mapping[keys[first]])
                     selected.update(mapping[keys[first]])
             hit = mapping.get(line)
             if hit:
+                self.witnesses.append(hit)
                 selected.update(hit)
                 continue
             containing = [n for n in nodes if n.lineno <= line <= getattr(n, 'end_lineno', n.lineno)]
@@ -180,16 +258,21 @@ class ImpactIndex:
                     hit = self.interval(path, node.lineno, node.end_lineno)
                 else:
                     unresolved = True
+            if hit:
+                self.witnesses.append(hit)
             selected.update(hit)
         if unresolved:
             # Import-time declarations may fail before runtime coverage starts.
-            return self.all.copy()
-        if not selected and probes:
+            return self.fallback()
+        if not selected and probes and not measured_empty:
             selected.update(self.modules.get(path, ()))
-        if not selected and path.startswith(('sqlglot/', 'tests/')):
+        if not selected and not measured_empty and path.startswith(('sqlglot/', 'tests/')):
             selected.update(self.all)
         return selected
     def select(self, text):
+        self.witnesses = []
+        self.conservative = False
+        self.import_sensitive = False
         selected = set()
         for change in parse_patch(text):
             paths = {p for p in (change.old, change.new) if p and p != '/dev/null'}
@@ -199,6 +282,7 @@ class ImpactIndex:
             found = False
             for path in paths:
                 if path in self.reads:
+                    self.witnesses.append(self.reads[path])
                     selected.update(self.reads[path])
                     found = True
             if not found and any(p.startswith('tests/fixtures/') for p in paths):
@@ -236,15 +320,39 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=Path, default=Path('/data'))
     parser.add_argument('--map', type=Path, default=Path(__file__).with_name('analysis.json.gz'))
+    parser.add_argument('--source', type=Path, default=Path(os.environ.get('SQLGLOT_SOURCE', '/opt/sqlglot')))
+    parser.add_argument('--static', action='store_true')
     args = parser.parse_args()
     tests = json.loads((args.data / 'tests.json').read_text(encoding='utf-8'))['tests']
+    usage_path = Path(__file__).with_name('usage.json.gz')
+    usage = None
+    if usage_path.is_file():
+        with gzip.open(usage_path, 'rt', encoding='utf-8') as f:
+            usage = json.load(f)
+    attribute_path = Path(__file__).with_name('attributes.json.gz')
+    attributes = None
+    if attribute_path.is_file():
+        with gzip.open(attribute_path, 'rt', encoding='utf-8') as f:
+            attributes = json.load(f)
+    dictionary_path = Path(__file__).with_name('dictionary_reads.json.gz')
+    dictionary_data = None
+    if dictionary_path.is_file():
+        with gzip.open(dictionary_path, 'rt', encoding='utf-8') as f:
+            dictionary_data = json.load(f)
     with gzip.open(args.map, 'rt', encoding='utf-8') as f:
-        index = ImpactIndex(json.load(f), tests)
+        index = ImpactIndex(json.load(f), tests, usage, attributes, dictionary_data)
     durations = {t['number']: round(t['seconds'] * 1000) for t in tests}
+    refiner = None
+    if not args.static and os.environ.get('BR_PROBE', '1') != '0' and args.source.is_dir():
+        from refine import Refiner
+        refiner = Refiner(args.source, index, tests)
     count = 0
     for patch in sorted((args.data / 'commits').glob('*.patch')):
         try:
-            selected = index.select(patch.read_text(encoding='utf-8'))
+            patch_text = patch.read_text(encoding='utf-8')
+            selected = index.select(patch_text)
+            if refiner is not None:
+                selected = refiner.refine(patch_text, selected)
         except Exception as error:
             print(f'Conservative fallback for {patch.name}: {type(error).__name__}', file=sys.stderr)
             selected = index.all

@@ -1,21 +1,13 @@
 {
   "exit_code": 0,
-  "cpu_seconds": 1.791377,
-  "wall_seconds": 1.7923207930000444,
-  "peak_rss_kib": 316428,
+  "cpu_seconds": 18.977273,
+  "wall_seconds": 18.852755178000734,
+  "peak_rss_kib": 618496,
   "evaluation": {
     "ok": true,
-    "simulated_milliseconds": 335485,
+    "simulated_milliseconds": 94790,
     "missed_commits": []
   },
-  "output_bytes": 37140,
-  "environment": "Native Python 3.12.14; not a Docker run",
-  "starter_sample_evaluation": {
-    "ok": true,
-    "simulated_milliseconds": 1210470,
-    "missed_commits": []
-  },
-  "selector_unit_tests": 15,
-  "coverage_baseline_tests_passed": 1621,
-  "ipc_baseline_tests_passed": 227
+  "output_bytes": 1533,
+  "environment": "Native Python 3.12.14; not a Docker run"
 }
