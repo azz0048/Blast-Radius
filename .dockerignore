@@ -1,0 +1,5 @@
+sample/
+output*.jsonl
+__pycache__/
+.git/
+*.zip
