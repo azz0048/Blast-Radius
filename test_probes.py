@@ -33,6 +33,28 @@ class ProbeTests(unittest.TestCase):
     def test_empty_selection_still_checks_imports(self):
         result=self.prober.run({'toy.py':b'raise RuntimeError("broken initialization")\n'},[])
         self.assertEqual(result.get('import_errors'),['toy.py'])
+    def test_library_change_breaking_test_module_import_is_reported(self):
+        source=(self.root/'test_toy.py').read_text()+'\nassert value() == 1\n'
+        (self.root/'test_toy.py').write_text(source)
+        result=self.prober.run({'toy.py':b'def value():\n    return 2\n'},['test_toy.py::Case::test_value'])
+        self.assertEqual(result.get('import_errors'),['test_toy.py'])
+    def test_suite_continues_after_a_failed_case(self):
+        bad='test_toy.py::Case::test_value';good='test_toy.py::Case::test_resource'
+        result=self.prober.run({'toy.py':b'def value():\n    return 2\n'},[bad,good])
+        self.assertTrue(result['complete'])
+        self.assertEqual(result['failed'],[bad])
+        self.assertEqual(set(result['checked']),{bad,good})
+    def test_deadline_keeps_previously_confirmed_cases(self):
+        good='test_toy.py::Case::test_resource';slow='test_toy.py::Case::test_value'
+        result=self.prober.run({'toy.py':b'def value():\n    while True: pass\n'},[good,slow],seconds=1.5)
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['checked'],[good])
+        self.assertEqual(result['failed'],[])
+    def test_class_cleanup_timeout_does_not_confirm_last_case(self):
+        source=(self.root/'test_toy.py').read_text()+'\n    @classmethod\n    def tearDownClass(cls):\n        while True: pass\n'
+        result=self.prober.run({'test_toy.py':source.encode()},['test_toy.py::Case::test_resource'],seconds=1)
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['checked'],[])
     def test_deadline_kills_only_the_trial(self):
         result=self.prober.run({'toy.py':b'def value():\n    while True: pass\n'},['test_toy.py::Case::test_value'],seconds=0.5)
         self.assertFalse(result['complete']);self.assertEqual(result.get('error'),'deadline')

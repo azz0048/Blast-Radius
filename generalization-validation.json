@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "path": "sqlglot/dialects/mysql.py",
+      "change": "SAFE_DIVISION",
+      "selected_count": 75,
+      "audit_checked": 1604,
+      "audit_complete": true,
+      "observed_failures": 3,
+      "observed_missing": [],
+      "import_errors": [],
+      "setup_errors": []
+    },
+    {
+      "path": "sqlglot/dialects/bigquery.py",
+      "change": "FORCE_EARLY_ALIAS_REF_EXPANSION",
+      "selected_count": 229,
+      "audit_checked": 1604,
+      "audit_complete": true,
+      "observed_failures": 1,
+      "observed_missing": [],
+      "import_errors": [],
+      "setup_errors": []
+    },
+    {
+      "path": "sqlglot/dialects/duckdb.py",
+      "change": "SUPPORTS_FIXED_SIZE_ARRAYS",
+      "selected_count": 5,
+      "audit_checked": 1604,
+      "audit_complete": true,
+      "observed_failures": 1,
+      "observed_missing": [],
+      "import_errors": [],
+      "setup_errors": []
+    },
+    {
+      "path": "sqlglot/dialects/postgres.py",
+      "change": "TYPED_DIVISION",
+      "selected_count": 57,
+      "audit_checked": 1604,
+      "audit_complete": true,
+      "observed_failures": 7,
+      "observed_missing": [],
+      "import_errors": [],
+      "setup_errors": []
+    },
+    {
+      "path": "sqlglot/optimizer/simplify.py",
+      "change": "condition at line 129",
+      "selected_count": 29,
+      "audit_checked": 1604,
+      "audit_complete": true,
+      "observed_failures": 10,
+      "observed_missing": [],
+      "import_errors": [],
+      "setup_errors": []
+    },
+    {
+      "path": "sqlglot/optimizer/normalize_identifiers.py",
+      "change": "condition at line 84",
+      "selected_count": 10,
+      "audit_checked": 1604,
+      "audit_complete": true,
+      "observed_failures": 2,
+      "observed_missing": [],
+      "import_errors": [],
+      "setup_errors": []
+    }
+  ],
+  "elapsed_seconds": 106.65519976300038,
+  "note": "Bounded local mutations; excludes expensive tests and cannot establish hidden accuracy."
+}

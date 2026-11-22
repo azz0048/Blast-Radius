@@ -1,0 +1,13 @@
+{
+  "exit_code": 0,
+  "cpu_seconds": 11.173131999999999,
+  "wall_seconds": 11.09800153300057,
+  "peak_rss_kib": 601780,
+  "evaluation": {
+    "ok": true,
+    "simulated_milliseconds": 150992,
+    "missed_commits": []
+  },
+  "output_bytes": 2112,
+  "environment": "Native Python 3.12.14 in read-only mount namespace, UID/GID 65534, two CPU affinity, /tmp tmpfs 64 MiB; not a Docker build or cgroup memory check"
+}

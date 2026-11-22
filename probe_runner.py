@@ -75,22 +75,38 @@ class Prober:
         pid=os.fork()
         if pid==0:
             os.close(read_fd)
+            def emit(kind,payload):
+                data=json.dumps({'kind':kind,'result':payload},separators=(',',':')).encode()+b'\n'
+                while data:
+                    written=os.write(write_fd,data);data=data[written:]
             try:
                 os.setsid()
                 with open(os.devnull,'w') as sink:
                     os.dup2(sink.fileno(),1)
                     if not os.environ.get('BR_PROBE_DEBUG'):os.dup2(sink.fileno(),2)
-                result=self._child(changes,test_ids)
+                result=self._child(changes,test_ids,lambda update:emit('progress',update))
             except BaseException as error:
                 result={'complete':False,'error':type(error).__name__}
             try:
-                data=json.dumps(result,separators=(',',':')).encode()
-                while data:
-                    written=os.write(write_fd,data);data=data[written:]
+                emit('final',result)
             finally:os.close(write_fd)
             os._exit(0)
         os.close(write_fd)
-        deadline=time.monotonic()+seconds;chunks=[];finished=False
+        deadline=time.monotonic()+seconds;buffer=b'';finished=False;final=None
+        observed={key:set() for key in ('checked','failed','import_errors','setup_errors')}
+        def consume(data):
+            nonlocal buffer,final
+            buffer+=data
+            while b'\n' in buffer:
+                line,buffer=buffer.split(b'\n',1)
+                try:event=json.loads(line)
+                except (ValueError,UnicodeError):continue
+                payload=event.get('result',{})
+                for key in observed:observed[key].update(payload.get(key,[]))
+                if event.get('kind')=='final':final=payload
+        def partial(error):
+            return {'complete':False,'error':error,
+                    **{key:sorted(values) for key,values in observed.items()}}
         try:
             while time.monotonic()<deadline:
                 try:
@@ -101,20 +117,21 @@ class Prober:
                 if ready:
                     data=os.read(read_fd,65536)
                     if not data:finished=True;break
-                    chunks.append(data)
+                    consume(data)
             if not finished:
                 try:os.killpg(pid,signal.SIGKILL)
                 except ProcessLookupError:pass
-                return {'complete':False,'error':'deadline'}
-            try:return json.loads(b''.join(chunks))
-            except (ValueError,UnicodeError):
-                _,status=os.waitpid(pid,0)
-                return {'complete':False,'error':'invalid child result','wait_status':status}
+                return partial('deadline')
+            if final is not None:
+                for key,values in observed.items():
+                    final[key]=sorted(set(final.get(key,[]))|values)
+                return final
+            return partial('invalid child result')
         finally:
             os.close(read_fd)
             try:os.waitpid(pid,0)
             except ChildProcessError:pass
-    def _child(self,changes,test_ids):
+    def _child(self,changes,test_ids,on_progress=None):
         import pytest
         root=self.root
         os.chdir(root);sys.path.insert(0,str(root))
@@ -156,7 +173,7 @@ class Prober:
                 except BaseException as error:
                     return {'complete':False,'import_errors':[filename],'error':type(error).__name__}
         if not test_ids:return {'complete':True,'failed':[],'checked':[],'import_errors':[],'exit':0}
-        direct=run_tests(test_ids,absolute)
+        direct=run_tests(test_ids,absolute,on_progress=on_progress)
         if direct is not None:return direct
         outcomes={};import_errors=[];details=[];wanted=set(test_ids)
         class Plugin:

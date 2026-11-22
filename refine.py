@@ -15,7 +15,7 @@ class Refiner:
         self.limit=95
         self.stats=[]
     def refine(self,text,selected):
-        from selector import parse_patch,apply_change
+        from selector import parse_patch,apply_change,schedule
         sensitive=getattr(self.index,'import_sensitive',False)
         if self.index.conservative:return selected
         if time.monotonic()-self.started>self.limit-3:
@@ -23,8 +23,18 @@ class Refiner:
         if len(selected)<=1 and not sensitive:return selected
         cheap={n for n in selected if self.by_number[n]['seconds']<=0.75}
         if not cheap and not sensitive:return selected
+        durations={n:round(self.by_number[n]['seconds']*1000) for n in selected}
+        def cost(numbers):
+            workers=schedule(numbers,durations)
+            return (max((sum(durations[n] for n in worker) for worker in workers),default=0)
+                    +2000*len(workers))/1000
+        possible_saving=max(0,cost(selected)-cost(selected-cheap))
+        if possible_saving<0.5:
+            if not sensitive:return selected
+            # Still check initialization when a precise class-field map was used.
+            cheap=set()
         # Bound work on very broad changes; unsupported edits keep the static plan.
-        if sum(self.by_number[n]['seconds'] for n in cheap)>10:
+        if sum(self.by_number[n]['seconds'] for n in cheap)>20:
             return self.index.all.copy() if sensitive else selected
         changes={}
         try:
@@ -38,24 +48,18 @@ class Refiner:
         except (OSError,UnicodeError,ValueError):return self.index.all.copy() if sensitive else selected
         remaining=self.limit-(time.monotonic()-self.started)
         probe_started=time.monotonic()
-        result=self.prober.run(changes,[self.by_number[n]['id'] for n in sorted(cheap)],seconds=min(14,max(1,remaining)))
+        trial_budget=min(12,max(0.7,possible_saving*0.7)) if cheap else 3
+        result=self.prober.run(changes,[self.by_number[n]['id'] for n in sorted(cheap)],seconds=min(trial_budget,max(1,remaining)))
         print(f'Probe cost: {len(selected)} candidates, {time.monotonic()-probe_started:.3f}s, complete={result.get("complete")}, failed={len(result.get("failed",[]))}',file=sys.stderr)
         if result.get('import_errors') or result.get('setup_errors'):
             return self.index.all.copy()
-        if not result.get('complete'):
+        checked={self.by_id[name] for name in result.get('checked',[]) if name in self.by_id}
+        if not checked and not result.get('complete'):
             return self.index.all.copy() if sensitive and not result.get('failed') else selected
         failed={self.by_id[name] for name in result['failed'] if name in self.by_id}
-        untested=selected-cheap
-        if failed:
-            answer=failed|untested
-        else:
-            # An expensive test is retained if its changed-line/class dependency
-            # has no passing inexpensive representative. This is a prediction,
-            # not a proof that unseen input-sensitive failures are impossible.
-            answer=set()
-            for number in untested:
-                relevant=[group for group in self.index.witnesses if number in group]
-                if not relevant or any(not (group&cheap) for group in relevant):answer.add(number)
-        self.stats.append((len(selected),len(cheap),len(answer)))
-        print(f'Online validation: {len(selected)} candidates, {len(cheap)} executed, {len(answer)} retained',file=sys.stderr)
+        # A test can be removed only after that exact test completed and passed.
+        # No passing representative can stand in for a different unexecuted test.
+        answer=selected-(checked-failed)
+        self.stats.append((len(selected),len(checked),len(answer)))
+        print(f'Online validation: {len(selected)} candidates, {len(checked)} completed, {len(answer)} retained',file=sys.stderr)
         return answer
