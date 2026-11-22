@@ -68,7 +68,7 @@ class Prober:
             return original_connect(*args,**kwargs)
         duckdb.connect=bounded_connect
         self.ready=True
-    def run(self,changes,test_ids,seconds=12):
+    def run(self,changes,test_ids,seconds=12,case_timeout=4,max_rss_mb=1536):
         self.prepare()
         read_fd,write_fd=os.pipe()
         sys.stdout.flush();sys.stderr.flush()
@@ -84,7 +84,7 @@ class Prober:
                 with open(os.devnull,'w') as sink:
                     os.dup2(sink.fileno(),1)
                     if not os.environ.get('BR_PROBE_DEBUG'):os.dup2(sink.fileno(),2)
-                result=self._child(changes,test_ids,lambda update:emit('progress',update))
+                result=self._child(changes,test_ids,lambda update:emit('progress',update),case_timeout=case_timeout)
             except BaseException as error:
                 result={'complete':False,'error':type(error).__name__}
             try:
@@ -111,7 +111,7 @@ class Prober:
             while time.monotonic()<deadline:
                 try:
                     resident=int(Path(f'/proc/{pid}/statm').read_text().split()[1])*os.sysconf('SC_PAGE_SIZE')
-                    if resident>1536*1024**2:break
+                    if resident>max_rss_mb*1024**2:break
                 except (OSError,ValueError,IndexError):pass
                 ready,_,_=select.select([read_fd],[],[],min(0.025,max(0,deadline-time.monotonic())))
                 if ready:
@@ -131,7 +131,7 @@ class Prober:
             os.close(read_fd)
             try:os.waitpid(pid,0)
             except ChildProcessError:pass
-    def _child(self,changes,test_ids,on_progress=None):
+    def _child(self,changes,test_ids,on_progress=None,case_timeout=4):
         import pytest
         root=self.root
         os.chdir(root);sys.path.insert(0,str(root))
@@ -173,7 +173,7 @@ class Prober:
                 except BaseException as error:
                     return {'complete':False,'import_errors':[filename],'error':type(error).__name__}
         if not test_ids:return {'complete':True,'failed':[],'checked':[],'import_errors':[],'exit':0}
-        direct=run_tests(test_ids,absolute,on_progress=on_progress)
+        direct=run_tests(test_ids,absolute,on_progress=on_progress,case_timeout=case_timeout)
         if direct is not None:return direct
         outcomes={};import_errors=[];details=[];wanted=set(test_ids)
         class Plugin:

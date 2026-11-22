@@ -96,7 +96,7 @@ def apply_change(source, change):
     return ''.join(result)
 
 class ImpactIndex:
-    def __init__(self, data, tests, usage=None, attributes=None, dictionary_data=None, comparison_data=None):
+    def __init__(self, data, tests, usage=None, attributes=None, dictionary_data=None, comparison_data=None, value_data=None, expression_data=None):
         self.all = {t['number'] for t in tests}
         self.numbers = {t['id']: t['number'] for t in tests}
         self.baseline_numbers = [self.numbers.get(nodeid) for nodeid in data.get('collection', [])]
@@ -147,6 +147,14 @@ class ImpactIndex:
         if comparison_data:
             from comparison_profiles import ComparisonIndex
             self.comparisons = ComparisonIndex(comparison_data,self.numbers)
+        self.values = None
+        if value_data:
+            from value_profiles import ValueIndex
+            self.values = ValueIndex(value_data,self.numbers)
+        self.expressions = None
+        if expression_data:
+            from expression_profiles import ExpressionIndex
+            self.expressions = ExpressionIndex(expression_data,self.numbers)
     def fallback(self):
         self.conservative = True
         return self.all.copy()
@@ -163,6 +171,15 @@ class ImpactIndex:
         for line in keys[bisect_left(keys, lo):bisect_right(keys, hi)]:
             selected.update(mapping[line])
         return selected
+    def observers(self,path):
+        protected=set(self.reads.get(path,()))
+        introspection={'__code__','__traceback__','traceback','exc_info','_getframe',
+                       'getframeinfo','currentframe','f_lineno','getsource',
+                       'getsourcelines','get_instructions','disassemble','Bytecode'}
+        for symbol in self.usage_symbols:
+            if symbol in introspection or symbol.startswith('co_'):
+                protected.update(self.usage_symbols.get(symbol,()))
+        return protected
     def select_python(self, change):
         path = change.old if change.old != '/dev/null' else change.new
         original = self.sources.get(path)
@@ -288,7 +305,20 @@ class ImpactIndex:
         for change in changes:
             paths = {p for p in (change.old, change.new) if p and p != '/dev/null'}
             if any(p.endswith('.py') for p in paths):
-                selected.update(self.select_python(change))
+                piece=self.select_python(change)
+                # Expression reachability also composes across files: an
+                # execution must reach at least one changed expression before
+                # its behavior can diverge. Semantic type/value assumptions
+                # remain restricted to single-file changes.
+                if (len(changes)>1 and self.expressions and change.old==change.new
+                        and change.old in self.sources and change.old.endswith('.py')):
+                    try:
+                        modified=apply_change(self.sources[change.old],change)
+                        new_tree=ast.parse(modified.encode('utf-8'),filename=change.old,type_comments=True)
+                        precise=self.expressions.filter(change.old,self.tree(change.old),new_tree,piece,self.observers(change.old))
+                        if precise is not None:piece=precise
+                    except (SyntaxError,ValueError,TypeError):pass
+                selected.update(piece)
                 continue
             found = False
             for path in paths:
@@ -308,22 +338,18 @@ class ImpactIndex:
                 selected.update(resource_selected or self.all)
             elif not found and any(Path(p).suffix in {'.toml', '.ini', '.cfg'} for p in paths):
                 selected.update(self.all)
-        if self.comparisons and len(changes)==1:
+        if (self.comparisons or self.values or self.expressions) and len(changes)==1:
             change=changes[0]
             if change.old==change.new and change.old.endswith('.py') and change.old in self.sources:
                 path=change.old
                 modified=apply_change(self.sources[path],change)
                 try:
                     new_tree=ast.parse(modified.encode('utf-8'),filename=path,type_comments=True)
-                    protected=set(self.reads.get(path,()))
-                    introspection={'__code__','__traceback__','traceback','exc_info','_getframe',
-                                   'getframeinfo','currentframe','f_lineno','getsource',
-                                   'getsourcelines','get_instructions','disassemble','Bytecode'}
-                    for symbol in self.usage_symbols:
-                        if symbol not in introspection and not symbol.startswith('co_'):continue
-                        protected.update(self.usage_symbols.get(symbol,()))
-                    precise=self.comparisons.filter(path,self.tree(path),new_tree,selected,protected)
-                    if precise is not None:selected=precise
+                    protected=self.observers(path)
+                    for profile in (self.comparisons,self.values,self.expressions):
+                        if profile is not None:
+                            precise=profile.filter(path,self.tree(path),new_tree,selected,protected)
+                            if precise is not None:selected=precise
                 except (SyntaxError,ValueError,TypeError):pass
         return selected
 
@@ -388,7 +414,21 @@ def main():
                 traits=json.loads(none_path.read_text())
                 if traits.get('pinned_commit') == baseline.get('pinned_commit'):
                     comparison_data.update({k:traits[k] for k in ('safe_eq_none_types','safe_ne_none_types','protected_methods')})
-    index = ImpactIndex(baseline, tests, usage, attributes, dictionary_data, comparison_data)
+    values = None
+    value_path = Path(__file__).with_name('values.json.gz')
+    if value_path.is_file():
+        with gzip.open(value_path,'rt',encoding='utf-8') as f:
+            candidate=json.load(f)
+        if candidate.get('pinned_commit')==baseline.get('pinned_commit'):
+            values=candidate
+    expressions = None
+    expression_path = Path(__file__).with_name('expressions.json.gz')
+    if expression_path.is_file():
+        with gzip.open(expression_path,'rt',encoding='utf-8') as f:
+            candidate=json.load(f)
+        if candidate.get('pinned_commit')==baseline.get('pinned_commit'):
+            expressions=candidate
+    index = ImpactIndex(baseline, tests, usage, attributes, dictionary_data, comparison_data, values, expressions)
     durations = {t['number']: round(t['seconds'] * 1000) for t in tests}
     refiner = None
     if not args.static and os.environ.get('BR_PROBE', '1') != '0' and args.source.is_dir():

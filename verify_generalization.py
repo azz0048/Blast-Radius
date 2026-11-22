@@ -41,7 +41,8 @@ def main():
     comparisons=read('comparisons.json.gz')
     traits=json.loads((project/'none_traits.json').read_text())
     comparisons.update({k:traits[k] for k in ('safe_eq_none_types','safe_ne_none_types','protected_methods')})
-    index=ImpactIndex(base,tests,read('usage.json.gz'),read('attributes.json.gz'),dictionary,comparisons)
+    index=ImpactIndex(base,tests,read('usage.json.gz'),read('attributes.json.gz'),dictionary,comparisons,
+                     read('values.json.gz'),read('expressions.json.gz'))
     refiner=Refiner(args.checkout,index,tests);prober=Prober(args.checkout)
     audit_ids=[t['id'] for t in tests if t['seconds']<=.75]
     by_id={t['id']:t['number'] for t in tests};cases=[]
