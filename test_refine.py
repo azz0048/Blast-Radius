@@ -46,4 +46,13 @@ class RefinerTests(unittest.TestCase):
         ref.by_number[1]['seconds']=.001;ref.by_number[3]['seconds']=.001
         self.assertEqual(ref.refine(PATCH,{1,2,3}),{1,2,3})
 
+    def test_small_selection_can_validate_a_moderate_case(self):
+        ref=self.refiner({'complete':True,'checked':['cheap','expensive'],'failed':[]})
+        ref.by_number[2]['seconds']=1.5
+        self.assertEqual(ref.refine(PATCH,{1,2}),set())
+
+    def test_unrequested_completed_id_does_not_remove_untested_case(self):
+        ref=self.refiner({'complete':True,'checked':['cheap','expensive','other'],'failed':[]})
+        self.assertEqual(ref.refine(PATCH,{1,2,3}),{2})
+
 if __name__=='__main__':unittest.main()

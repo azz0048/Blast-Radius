@@ -96,10 +96,12 @@ def apply_change(source, change):
     return ''.join(result)
 
 class ImpactIndex:
-    def __init__(self, data, tests, usage=None, attributes=None, dictionary_data=None):
+    def __init__(self, data, tests, usage=None, attributes=None, dictionary_data=None, comparison_data=None):
         self.all = {t['number'] for t in tests}
         self.numbers = {t['id']: t['number'] for t in tests}
         self.baseline_numbers = [self.numbers.get(nodeid) for nodeid in data.get('collection', [])]
+        self.unknown_tests = ({number for name,number in self.numbers.items() if name not in set(data['collection'])}
+                              if 'collection' in data else set())
         self.usage_classes = {}
         self.usage_symbols = {}
         if usage:
@@ -120,11 +122,13 @@ class ImpactIndex:
         self.dictionary_wildcards = {}
         self.dictionary_unsafe_keys = set()
         self.dictionary_unsafe_fields = set()
+        self.dictionary_pure_refs = set()
         if dictionary_data:
             catalogue = dictionary_data['collection']
             self.dictionary_wrapped = set(dictionary_data['wrapped'])
             self.dictionary_unsafe_keys = set(dictionary_data['unsafe_keys'])
             self.dictionary_unsafe_fields = set(dictionary_data['unsafe_fields'])
+            self.dictionary_pure_refs = set(dictionary_data.get('pure_references',()))
             self.dictionary_reads = {key: {self.numbers[catalogue[i]] for i in ids if catalogue[i] in self.numbers} for key, ids in dictionary_data['reads'].items()}
             self.dictionary_wildcards = {key: {self.numbers[catalogue[i]] for i in ids if catalogue[i] in self.numbers} for key, ids in dictionary_data['wildcards'].items()}
         self.by_file = {}
@@ -139,6 +143,10 @@ class ImpactIndex:
         self.witnesses = []
         self.conservative = False
         self.import_sensitive = False
+        self.comparisons = None
+        if comparison_data:
+            from comparison_profiles import ComparisonIndex
+            self.comparisons = ComparisonIndex(comparison_data,self.numbers)
     def fallback(self):
         self.conservative = True
         return self.all.copy()
@@ -183,6 +191,8 @@ class ImpactIndex:
         measured_empty = False
         for line in sorted(probes):
             enclosing = [n for n in functions if n.lineno < line <= n.end_lineno]
+            if any(n.name in {'__eq__','__ne__'} for n in enclosing):
+                return self.fallback()
             if enclosing and any(line < n.body[0].lineno for n in enclosing if n.body):
                 return self.fallback()
             if not enclosing:
@@ -273,8 +283,9 @@ class ImpactIndex:
         self.witnesses = []
         self.conservative = False
         self.import_sensitive = False
-        selected = set()
-        for change in parse_patch(text):
+        selected = self.unknown_tests.copy()
+        changes = parse_patch(text)
+        for change in changes:
             paths = {p for p in (change.old, change.new) if p and p != '/dev/null'}
             if any(p.endswith('.py') for p in paths):
                 selected.update(self.select_python(change))
@@ -297,23 +308,24 @@ class ImpactIndex:
                 selected.update(resource_selected or self.all)
             elif not found and any(Path(p).suffix in {'.toml', '.ini', '.cfg'} for p in paths):
                 selected.update(self.all)
+        if self.comparisons and len(changes)==1:
+            change=changes[0]
+            if change.old==change.new and change.old.endswith('.py') and change.old in self.sources:
+                path=change.old
+                modified=apply_change(self.sources[path],change)
+                try:
+                    new_tree=ast.parse(modified.encode('utf-8'),filename=path,type_comments=True)
+                    protected=set(self.reads.get(path,()))
+                    introspection={'__code__','__traceback__','traceback','exc_info','_getframe',
+                                   'getframeinfo','currentframe','f_lineno','getsource',
+                                   'getsourcelines','get_instructions','disassemble','Bytecode'}
+                    for symbol in self.usage_symbols:
+                        if symbol not in introspection and not symbol.startswith('co_'):continue
+                        protected.update(self.usage_symbols.get(symbol,()))
+                    precise=self.comparisons.filter(path,self.tree(path),new_tree,selected,protected)
+                    if precise is not None:selected=precise
+                except (SyntaxError,ValueError,TypeError):pass
         return selected
-
-def patched_files(index, root, text):
-    """{path: patched bytes} for every file the patch edits in place, or None if unsupported."""
-    try:
-        changes = {}
-        for change in parse_patch(text):
-            path = change.old
-            if path != change.new or path == '/dev/null':
-                return None
-            old = index.sources.get(path)
-            if old is None:
-                old = (root / path).read_text(encoding='utf-8')
-            changes[path] = apply_change(old, change).encode('utf-8')
-        return changes or None
-    except (OSError, UnicodeError, ValueError):
-        return None
 
 def schedule(selected, durations):
     if not selected:
@@ -356,16 +368,32 @@ def main():
         with gzip.open(dictionary_path, 'rt', encoding='utf-8') as f:
             dictionary_data = json.load(f)
     with gzip.open(args.map, 'rt', encoding='utf-8') as f:
-        index = ImpactIndex(json.load(f), tests, usage, attributes, dictionary_data)
+        baseline = json.load(f)
+    flow_path = Path(__file__).with_name('key_flow.json.gz')
+    if dictionary_data and flow_path.is_file():
+        with gzip.open(flow_path, 'rt', encoding='utf-8') as f:
+            flow = json.load(f)
+        if flow.get('pinned_commit') == baseline.get('pinned_commit'):
+            from dictionary_impact import merge_maps
+            dictionary_data = merge_maps(dictionary_data,flow)
+    comparison_path = Path(__file__).with_name('comparisons.json.gz')
+    comparison_data = None
+    if comparison_path.is_file():
+        with gzip.open(comparison_path, 'rt', encoding='utf-8') as f:
+            candidate = json.load(f)
+        if candidate.get('pinned_commit') == baseline.get('pinned_commit'):
+            comparison_data = candidate
+            none_path=Path(__file__).with_name('none_traits.json')
+            if none_path.is_file():
+                traits=json.loads(none_path.read_text())
+                if traits.get('pinned_commit') == baseline.get('pinned_commit'):
+                    comparison_data.update({k:traits[k] for k in ('safe_eq_none_types','safe_ne_none_types','protected_methods')})
+    index = ImpactIndex(baseline, tests, usage, attributes, dictionary_data, comparison_data)
     durations = {t['number']: round(t['seconds'] * 1000) for t in tests}
     refiner = None
-    stand_in = None
-    started = time.monotonic()
     if not args.static and os.environ.get('BR_PROBE', '1') != '0' and args.source.is_dir():
         from refine import Refiner
         refiner = Refiner(args.source, index, tests)
-        from proxy import Proxy
-        stand_in = Proxy(refiner.prober, tests)
     count = 0
     for patch in sorted((args.data / 'commits').glob('*.patch')):
         try:
@@ -373,8 +401,6 @@ def main():
             selected = index.select(patch_text)
             if refiner is not None:
                 selected = refiner.refine(patch_text, selected)
-            if stand_in is not None and time.monotonic() - started < 150:
-                selected = stand_in.apply(patched_files(index, args.source, patch_text), selected)
         except Exception as error:
             print(f'Conservative fallback for {patch.name}: {type(error).__name__}', file=sys.stderr)
             selected = index.all

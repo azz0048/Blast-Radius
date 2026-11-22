@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "path": "sqlglot/optimizer/qualify_columns.py",
+      "change": "None proof at line 1254",
+      "selected_count": 0,
+      "audit_checked": 1604,
+      "audit_complete": true,
+      "observed_failures": 0,
+      "observed_missing": [],
+      "import_errors": [],
+      "setup_errors": [],
+      "inconclusive_collection": false
+    },
+    {
+      "path": "sqlglot/expressions/core.py",
+      "change": "None proof dependency changed at line 838",
+      "selected_count": 1620,
+      "audit_checked": 0,
+      "audit_complete": false,
+      "observed_failures": 0,
+      "observed_missing": [],
+      "import_errors": [
+        "tests/dialects/test_athena.py"
+      ],
+      "setup_errors": [],
+      "inconclusive_collection": false
+    }
+  ],
+  "elapsed_seconds": 18.150064810999993,
+  "note": "Bounded local mutations; excludes expensive tests and cannot establish hidden accuracy."
+}

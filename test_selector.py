@@ -70,6 +70,15 @@ class SelectorTests(unittest.TestCase):
         selected = index.select(patch('def f():\n    return 1\n', 'def f():\n    return 2\n'))
         self.assertEqual(selected, {9})
 
+    def test_tests_absent_from_baseline_catalogue_are_always_retained(self):
+        source='def f():\n    return 1\n'
+        data={'collection':['known'],'sources':{'sqlglot/example.py':source},
+              'lines':{'sqlglot/example.py':{'2':[0]}},'modules':{},'reads':{}}
+        tests=[{'id':'known','number':9,'file':'tests/test_known.py'},
+               {'id':'new','number':52,'file':'tests/test_new.py'}]
+        index=ImpactIndex(data,tests)
+        self.assertEqual(index.select(patch(source,source.replace('return 1','return 2'))),{9,52})
+
     def test_resource_dependencies(self):
         index = self.make_index()
         selected = index.select(patch('SELECT 1;\n', 'SELECT 2;\n', 'tests/fixtures/data.sql'))
@@ -168,6 +177,44 @@ class SelectorTests(unittest.TestCase):
     def test_import_cached_dictionary_key_uses_constructor_fallback(self):
         source, index = self.dictionary_index(unsafe=True)
         self.assertEqual(index.select(patch(source, source.replace("'a': 1", "'a': 7"))), {4, 9})
+
+    def test_dictionary_with_unchanged_unpack_tracks_literal_value(self):
+        source,index=self.dictionary_index()
+        source=source.replace("{'a': 1", "{**BASE, 'a': 1")
+        index.sources['sqlglot/example.py']=source
+        self.assertEqual(index.select(patch(source,source.replace("'a': 1","'a': 7"))),{9})
+
+    def test_changed_dictionary_unpack_uses_wide_dependencies(self):
+        source,index=self.dictionary_index()
+        source=source.replace("{'a': 1", "{**BASE, 'a': 1")
+        index.sources['sqlglot/example.py']=source
+        self.assertEqual(index.select(patch(source,source.replace('**BASE','**OTHER'))),{4,9})
+
+    def test_import_time_call_in_dictionary_value_is_not_narrowed(self):
+        source,index=self.dictionary_index()
+        self.assertEqual(index.select(patch(source,source.replace("'a': 1","'a': register()"))),{4,9})
+
+    def test_removing_import_time_call_in_dictionary_value_is_not_narrowed(self):
+        source,index=self.dictionary_index()
+        source=source.replace("'a': 1","'a': register()")
+        index.sources['sqlglot/example.py']=source
+        self.assertEqual(index.select(patch(source,source.replace("'a': register()","'a': 1"))),{4,9})
+
+    def test_lambda_body_runs_only_when_its_dictionary_value_is_used(self):
+        source,index=self.dictionary_index()
+        source=source.replace("'a': 1","'a': lambda: first()")
+        index.sources['sqlglot/example.py']=source
+        self.assertEqual(index.select(patch(source,source.replace('first()','second()'))),{9})
+
+    def test_lambda_default_with_import_side_effect_is_not_narrowed(self):
+        source,index=self.dictionary_index()
+        source=source.replace("'a': 1","'a': lambda x=register(): x")
+        index.sources['sqlglot/example.py']=source
+        self.assertEqual(index.select(patch(source,source.replace('register()','other()'))),{4,9})
+
+    def test_unverified_attribute_access_in_value_uses_wide_dependencies(self):
+        source,index=self.dictionary_index()
+        self.assertEqual(index.select(patch(source,source.replace("'a': 1","'a': obj.property"))),{4,9})
 
 
 if __name__ == '__main__':

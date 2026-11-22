@@ -1,130 +1,126 @@
 # Blast Radius v4
 
-v4 adds exact stand-ins for the slowest tests, which v3 kept whenever the baseline map flagged
-them (they are too slow to trial-run):
+V4 adds baseline operand-type analysis, source checks for comparisons with None, and dictionary-copy dependencies to the zero-miss v3 selector.
 
-| Test | Recorded | Stand-in | Stand-in cost |
-| --- | --- | --- | --- |
-| `test_execute_tpcds` | 21.5 s | TPC-DS fingerprint | ~4.5 s |
-| `test_execute_tpch`, `test_optimized_tpch` | 3.9 s, 3.5 s | TPC-H fingerprint | ~0.4 s |
-| `test_max_nodes` | 28.8 s | same assertions at 1/10 width, limits scaled by 1/10 | ~2.7 s |
+This is a new, unscored candidate. The current best official result is **365.0 seconds with zero missed commits**, from v3 at `59a98106f8c51509156bae1c0b9c7c02c6257481`. Keep that entry selected until a new submission scores better. A top-ten position requires an official hidden result.
 
-* **TPC executor tests** (`proxy.py`). Their outcome is a function of what sqlglot computes for the
-  fixture queries: the DuckDB SQL they are transpiled to, the parsed (pickled) and optimized trees,
-  the tables found, the plan, and the Python code generated for every plan step. In the patched
-  child these are hashed and compared with the pinned commit's hash, computed from the pinned
-  source while the image builds. Equal hashes remove the tests. Any patch touching the executor
-  runtime, planner, Python generator, helpers, schema, the test file, `tests/helpers.py` or the
-  TPC fixtures keeps them. The test module itself is imported first, so import breakage keeps them.
-* **test_max_nodes**. Node counts grow exactly with the width, so every limit is exceeded or not
-  exactly as in the full test; all other assertions are unchanged. Patches touching
-  `tests/test_parser.py` or `tests/helpers.py` keep it.
-
-Validation: 0 misses on the 30 sample commits (157.7 s simulated + CPU, v3: 165.2 s); the stand-ins
-never dropped a failing test on the sample (2jrq, 3utz keep `test_execute_tpcds`); 25 random
-mutations in optimizer/parser/generator/DuckDB code where the fingerprint was unchanged all passed
-the real executor tests; 14 random parser/tokenizer mutations agreed with the real `test_max_nodes`,
-and 4 crafted node-limit breakages were all kept.
-
-# Blast Radius v3
-
-This revision addresses two accuracy risks in v2: skipping an expensive test based on a different passing test, and failing to classify an error while importing an unchanged test module as a collection failure.
-
-The hidden scorer reported one miss for v2 but did not identify the commit, so these fixes cannot establish that the specific hidden miss is gone. Keep the previously scored **480.0-second entry** selected until a new scored submission improves on it.
-
-## Validation
+## Local validation
 
 | Check | Result |
 | --- | --- |
 | Public sample patches | 30 |
-| Missed sample commits | 0 |
-| Simulated public sample cost | 150.992 seconds |
-| CPU in the read-only verification | 11.173 seconds |
-| Total in that local run | 162.165 seconds |
-| Focused selector, runner, and regression tests | 36 passed |
-| Additional generated changes | 6 |
-| Inexpensive tests checked per generated change | 1,604 |
-| Observed failing tests omitted in those checks | 0 |
+| Missed public sample commits | 0 |
+| Simulated sample cost | 96.757 seconds |
+| CPU, including probe children | 11.065 seconds |
+| Total in the recorded local run | 107.822 seconds |
+| V3 total on the same public sample | About 162.2 seconds |
+| Focused regression tests | 77 passed |
+| Complete baseline runs for the new operand and key maps | 1,621 tests passed each |
+| Direct runner check, inexpensive and moderate baseline cases | 1,615 passed |
+| Additional generated changes audited | 14 |
 
-The additional audit excludes 16 expensive tests and is not a hidden-accuracy guarantee. It generated fresh scalar-flag and function-condition changes from baseline source. It does not read the sample answer key, and its results are never used by the runtime selector.
+Thirteen generated changes completed checks of 1,604 inexpensive test methods each, with no observed failing test omitted. The fourteenth intentionally broke equality during test-module import; the selector retained all 1,620 catalogue tests. The mutation audits exclude 16 expensive tests. Full baseline coverage maps include those tests, but these audits are not a guarantee of hidden recall.
 
-The read-only verification used Python 3.12.14, UID/GID 65534, two-CPU affinity, a read-only mount namespace, and a 64 MiB temporary filesystem. Peak process RSS was about 588 MiB. It was not an actual Docker run and did not enforce the scorer's cgroup memory or network limits. The Dockerfile and package pins are unchanged from the v2 image that the grader built successfully.
+The direct runner check uses a longer 15-second case limit to validate execution fidelity. Production probes have shorter limits and retain a test when it cannot be confirmed as passing.
 
-For context, the earlier local public-sample totals were about 337.3 seconds for v1 and 113.8 seconds for v2. V2's lower sample total did not generalize: its official hidden score was 621.6 seconds with one miss. Public-sample totals should not be compared directly with hidden scores or used to promise a leaderboard placement.
+The recorded sample run used native Python 3.12.14, UID/GID 65534, two-CPU affinity, a read-only filesystem, and a 64 MiB temporary filesystem. Peak process RSS was about 727 MiB. This was not an actual Docker build, cgroup-memory check, or network-isolation check. The image uses pinned Python 3.13 and the same dependency versions as the successfully graded v3 image.
 
-## Update and submit
+Public-sample totals cannot be compared directly to hidden scores. The earlier v2 sample result was faster but missed a hidden commit; v4 preserves untested cases unless a separate, restricted semantic analysis supports removing them.
 
-1. Extract this ZIP.
-2. Open https://github.com/azz0048/Blast-Radius and choose **Add file → Upload files**.
-3. Upload all extracted contents at the repository root, replacing existing files. Keep Dockerfile at the top level.
-4. Use a commit message such as **Upgrade to v3: preserve untested tests**.
+## Submit
+
+1. Extract the ZIP.
+2. Open https://github.com/azz0048/Blast-Radius and select **Add file → Upload files**.
+3. Upload **all extracted contents** to the repository root, replacing existing files. Keep Dockerfile at the top level.
+4. Use a commit message such as **Upgrade to v4: type and key dependencies**.
 5. With Docker and make available, run `make sample`.
-6. Submit the public repository and the new full commit SHA on the competition page. A blank SHA selects the latest default-branch commit.
-7. Inspect the score and miss count. Leave the 480.0-second result selected unless the new result is better.
+6. Submit the public repository and its new commit SHA. Leaving the SHA blank selects the newest default-branch commit.
+7. Inspect the official score and missed-commit count before selecting a different final entry.
 
-Do not select the 621.6-second v2 entry as your final result.
+Keep every new module and metadata file from this archive together; the Dockerfile references the required runtime files explicitly.
 
 ## What changed
 
-- A test is removed only when that exact test completed and passed. An unexecuted test stays selected.
-- Probes continue to other test methods after a failure, while a failing subtest can end its own method early.
-- Confirmed results stream from the child. A deadline or memory guard retains the unconfirmed remainder.
-- The last case is not confirmed until its fixture cleanup has completed. Import, class-setup, or class-cleanup errors trigger a broad fallback.
-- An exception while importing an unchanged test file is reported explicitly, including when changed library code caused it.
-- Probe budgets depend on the maximum simulated cost that pruning could save. A probe is skipped when unexecuted expensive tests already determine the worker cost. Precise class-field selections still receive an initialization check.
-- The total probe budget, per-case timeouts, RSS guard, and bounded DuckDB memory and threads remain enabled.
+### Restricted comparison analysis
 
-The baseline coverage, constructor, scalar-field, and dictionary-key maps are unchanged. They predict candidate tests and can still have limitations for unseen edits. Online passing results apply to the candidates actually executed; they are not a proof of complete hidden recall.
+The operand map records only types seen while running the unchanged pinned baseline. The collector evaluates the **original operator only**. It never evaluates alternate operators, reads incoming patches, or stores mutation answers.
 
-## Runtime and scoring
+At runtime, the comparison analysis applies only when an entire single-file AST change consists of identity/equality substitutions with unchanged operands and polarity. Plain objects with identity equality, comparisons to None for supported built-ins, and canonical members of suitable Enum classes can support equivalence. Noncanonical Enum objects and unproved custom equality remain conservative.
 
-The pinned baseline is:
+Additional type properties come from a small source interpreter for the unchanged `__eq__` and `__ne__` methods. It accepts only supported effect-free paths and checks equality and inequality independently. Mutable global flags, unknown calls, recursion, instance shadowing, and unsupported statements prevent a proof.
+
+The metadata includes the source ranges of methods used by these checks. A patch touching those implementations invalidates dependent properties. Equality-method edits otherwise begin with full-suite coverage. Source readers, bytecode/traceback consumers, and test identities missing from baseline metadata remain protected.
+
+### Dictionary dependencies
+
+The new key map follows unchanged dictionary copies, including copies between dialect families. It supports value-only edits with identical keys, key order, and unpack expressions. Value construction must be supported and free of import-time effects; arbitrary calls and effectful lambda defaults use wider dependencies.
+
+Cached copies and unsupported metaclass uses disable narrow key selection. A separate cold-import pass protects dictionaries used before normal test-level tracing starts, including their parent and copied origins. This protects global values that could otherwise be invisible to later key reads.
+
+### Online checks
+
+V3's rule remains: an unexecuted test stays selected. Only the exact completed passing test can be removed by an online trial.
+
+Small two-test selections may also execute moderately priced cases. Larger selections use the inexpensive-case limit. Work is bounded by potential simulated savings, per-case timeouts, a total probe budget, and a child RSS guard. Partial results retain unconfirmed cases. Import and class/module fixture failures use broad fallbacks.
+
+No output is reused across container runs.
+
+## Metadata and provenance
+
+All maps derive from the unchanged revision:
 
 ```text
 eb11aec4be8cb2122afe713a4816662c3f0fb2fa
 ```
 
-The Docker build installs pinned runtime requirements from PyPI, fetches that exact public sqlglot revision, and precompiles bytecode. The container runs as UID/GID 65534. Answer JSON lines go to stdout and diagnostics to stderr.
+| File | Baseline information |
+| --- | --- |
+| analysis.json.gz | Source, line coverage, module execution, fixture reads |
+| usage.json.gz | Constructors and explicit class references |
+| attributes.json.gz | Scalar-field reads and source references |
+| dictionary_reads.json.gz | Existing safe dictionary-key reads |
+| comparisons.json.gz | Operand types, canonical Enum membership, test contexts |
+| key_flow.json.gz | Key readers, dictionary-copy origins, cache/import exclusions |
+| none_traits.json | Source-derived equality properties and protected method ranges |
 
-The selector uses baseline dependencies to find candidates, checks selected inexpensive cases against the **current runtime patch** in isolated in-memory trials, and balances retained tests across one through eight workers with the two-second fee per worker. Trial CPU is charged normally. No output is reused between container runs.
+Runtime numbers are resolved from test identities rather than fixed test numbers. The sample answer key is used only by local scorers after the selector exits. Samples, answers, mutation audit results, collectors, and validation reports are not copied into the runtime image.
 
-Collectors use only unchanged baseline source. There are no stored patch-to-failure answers. Samples, answer keys, audit results, collectors, and local validation reports are excluded from the runtime image.
+The original supplied `score.py` is unchanged. The source index is distributed with `LICENSE.sqlglot`.
 
-## Run checks
+## Run the checks
 
-With Docker:
+With Docker and make:
 
 ```sh
 make sample
 ```
 
-Without Docker, use a separate checkout of the pinned baseline and Python 3.12 or newer:
+Without Docker, use Python 3.12+ and a separate unchanged checkout of the pinned source:
 
 ```sh
 python3 -m pip install -r runtime-requirements.txt
-python3 -m unittest -v test_selector test_probes test_refine
+python3 -m unittest -v test_selector test_probes test_refine test_comparisons test_none_semantics test_import_guards
 SQLGLOT_SOURCE=/absolute/path/to/sqlglot-source BR_PROBE=1 python3 verify.py
-```
-
-The environment-variable command uses POSIX syntax. On Windows, use WSL or set those variables in PowerShell first. `verify.py` writes `output.jsonl` and `validation.json`; only that checker reads sample answers after the selector exits.
-
-The extra local audit can be reproduced with:
-
-```sh
+python3 verify_baseline.py /absolute/path/to/sqlglot-source
 python3 verify_generalization.py /absolute/path/to/sqlglot-source
 ```
 
-It takes about two minutes here and writes `generalization-validation.json`. It is a diagnostic, not a source of runtime answers.
+The environment-variable syntax above is for a POSIX shell; on Windows, use WSL or set the variables in PowerShell. Native checks do not replace checking the actual container. The full generated-change audit takes several minutes.
 
-## Regenerate baseline maps
+## Regenerate metadata
 
-The included maps avoid running the entire baseline suite during each image build. Install `map-requirements.txt` and use an unchanged external checkout:
+The committed maps avoid running baseline tests in every image build. To regenerate, install `map-requirements.txt` and run from this project directory, using only the unchanged pinned checkout:
 
 ```sh
 python3 build_map.py /absolute/path/to/sqlglot-source --output analysis.json.gz
 python3 build_usage.py /absolute/path/to/sqlglot-source --output usage.json.gz
 python3 build_attributes.py /absolute/path/to/sqlglot-source --output attributes.json.gz
 python3 build_dictionary_reads.py /absolute/path/to/sqlglot-source --output dictionary_reads.json.gz
+python3 build_comparisons.py /absolute/path/to/sqlglot-source --output comparisons.json.gz
+python3 build_key_flow.py /absolute/path/to/sqlglot-source --output key_flow.json.gz
+python3 build_none_traits.py /absolute/path/to/sqlglot-source --output none_traits.json
 ```
 
-Each collector executes baseline tests. Keep that source checkout outside the submission repository. The unchanged full baseline previously passed 1,621 tests. `requirements.lock` records the larger development environment; the Docker build uses `runtime-requirements.txt`. The source index is covered by `LICENSE.sqlglot`.
+These collectors can take many minutes together. Keep the source checkout outside the submission repository. `build_key_flow.py` includes the cold-import guard pass; `import_key_guards.py` can also add those guards to an existing key-flow map.
+
+The Docker build fetches only the pinned public sqlglot source and installs pinned PyPI packages, precompiles bytecode, then runs as UID/GID 65534. It writes answer JSON to stdout and diagnostics to stderr.

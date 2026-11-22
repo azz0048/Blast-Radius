@@ -21,7 +21,8 @@ class Refiner:
         if time.monotonic()-self.started>self.limit-3:
             return self.index.all.copy() if sensitive else selected
         if len(selected)<=1 and not sensitive:return selected
-        cheap={n for n in selected if self.by_number[n]['seconds']<=0.75}
+        ceiling=3.0 if len(selected)<=2 else 0.75
+        cheap={n for n in selected if self.by_number[n]['seconds']<=ceiling}
         if not cheap and not sensitive:return selected
         durations={n:round(self.by_number[n]['seconds']*1000) for n in selected}
         def cost(numbers):
@@ -53,7 +54,7 @@ class Refiner:
         print(f'Probe cost: {len(selected)} candidates, {time.monotonic()-probe_started:.3f}s, complete={result.get("complete")}, failed={len(result.get("failed",[]))}',file=sys.stderr)
         if result.get('import_errors') or result.get('setup_errors'):
             return self.index.all.copy()
-        checked={self.by_id[name] for name in result.get('checked',[]) if name in self.by_id}
+        checked={self.by_id[name] for name in result.get('checked',[]) if name in self.by_id}&cheap
         if not checked and not result.get('complete'):
             return self.index.all.copy() if sensitive and not result.get('failed') else selected
         failed={self.by_id[name] for name in result['failed'] if name in self.by_id}
