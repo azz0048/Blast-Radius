@@ -29,8 +29,8 @@ def load_index(project, tests, new=True):
     comparison_data.update({k:traits[k] for k in ('safe_eq_none_types','safe_ne_none_types','protected_methods')})
     return ImpactIndex(base,tests,read('usage.json.gz'),read('attributes.json.gz'),
                        merge_maps(read('dictionary_reads.json.gz'),read('key_flow.json.gz')),
-                       comparison_data,read('values.json.gz') if new else None,
-                       read('expressions.json.gz') if new else None)
+                       comparison_data,read('values.json.gz'),read('expressions.json.gz'),
+                       read('branch_flow.json.gz') if new else None)
 
 
 def main():

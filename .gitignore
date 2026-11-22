@@ -2,4 +2,3 @@ __pycache__/
 output*.jsonl
 .coverage*
 *.zip
-tpc_baseline.json

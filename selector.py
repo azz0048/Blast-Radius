@@ -96,7 +96,7 @@ def apply_change(source, change):
     return ''.join(result)
 
 class ImpactIndex:
-    def __init__(self, data, tests, usage=None, attributes=None, dictionary_data=None, comparison_data=None, value_data=None, expression_data=None):
+    def __init__(self, data, tests, usage=None, attributes=None, dictionary_data=None, comparison_data=None, value_data=None, expression_data=None, flow_data=None):
         self.all = {t['number'] for t in tests}
         self.numbers = {t['id']: t['number'] for t in tests}
         self.baseline_numbers = [self.numbers.get(nodeid) for nodeid in data.get('collection', [])]
@@ -155,6 +155,10 @@ class ImpactIndex:
         if expression_data:
             from expression_profiles import ExpressionIndex
             self.expressions = ExpressionIndex(expression_data,self.numbers)
+        self.flow = None
+        if flow_data:
+            from branch_flow import FlowIndex
+            self.flow = FlowIndex(flow_data,self.numbers)
     def fallback(self):
         self.conservative = True
         return self.all.copy()
@@ -338,7 +342,7 @@ class ImpactIndex:
                 selected.update(resource_selected or self.all)
             elif not found and any(Path(p).suffix in {'.toml', '.ini', '.cfg'} for p in paths):
                 selected.update(self.all)
-        if (self.comparisons or self.values or self.expressions) and len(changes)==1:
+        if (self.comparisons or self.values or self.expressions or self.flow) and len(changes)==1:
             change=changes[0]
             if change.old==change.new and change.old.endswith('.py') and change.old in self.sources:
                 path=change.old
@@ -346,28 +350,12 @@ class ImpactIndex:
                 try:
                     new_tree=ast.parse(modified.encode('utf-8'),filename=path,type_comments=True)
                     protected=self.observers(path)
-                    for profile in (self.comparisons,self.values,self.expressions):
+                    for profile in (self.comparisons,self.values,self.expressions,self.flow):
                         if profile is not None:
                             precise=profile.filter(path,self.tree(path),new_tree,selected,protected)
                             if precise is not None:selected=precise
                 except (SyntaxError,ValueError,TypeError):pass
         return selected
-
-def patched_files(index, root, text):
-    """{path: patched bytes} for every file the patch edits in place, or None if unsupported."""
-    try:
-        changes = {}
-        for change in parse_patch(text):
-            path = change.old
-            if path != change.new or path == '/dev/null':
-                return None
-            old = index.sources.get(path)
-            if old is None:
-                old = (root / path).read_text(encoding='utf-8')
-            changes[path] = apply_change(old, change).encode('utf-8')
-        return changes or None
-    except (OSError, UnicodeError, ValueError):
-        return None
 
 def schedule(selected, durations):
     if not selected:
@@ -444,17 +432,19 @@ def main():
             candidate=json.load(f)
         if candidate.get('pinned_commit')==baseline.get('pinned_commit'):
             expressions=candidate
-    index = ImpactIndex(baseline, tests, usage, attributes, dictionary_data, comparison_data, values, expressions)
+    flow = None
+    branch_path = Path(__file__).with_name('branch_flow.json.gz')
+    if branch_path.is_file():
+        with gzip.open(branch_path,'rt',encoding='utf-8') as f:
+            candidate=json.load(f)
+        if candidate.get('pinned_commit')==baseline.get('pinned_commit'):
+            flow=candidate
+    index = ImpactIndex(baseline, tests, usage, attributes, dictionary_data, comparison_data, values, expressions, flow)
     durations = {t['number']: round(t['seconds'] * 1000) for t in tests}
     refiner = None
     if not args.static and os.environ.get('BR_PROBE', '1') != '0' and args.source.is_dir():
         from refine import Refiner
         refiner = Refiner(args.source, index, tests)
-    stand_in = None
-    started = time.monotonic()
-    if refiner is not None:
-        from tpc import StandIn
-        stand_in = StandIn(refiner.prober, tests, args.source)
     count = 0
     for patch in sorted((args.data / 'commits').glob('*.patch')):
         try:
@@ -462,8 +452,6 @@ def main():
             selected = index.select(patch_text)
             if refiner is not None:
                 selected = refiner.refine(patch_text, selected)
-            if stand_in is not None and time.monotonic() - started < 140:
-                selected = stand_in.apply(patch_text, patched_files(index, args.source, patch_text), selected)
         except Exception as error:
             print(f'Conservative fallback for {patch.name}: {type(error).__name__}', file=sys.stderr)
             selected = index.all

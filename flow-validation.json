@@ -1,0 +1,120 @@
+{
+  "cases": [
+    {
+      "path": "sqlglot/optimizer/unnest_subqueries.py",
+      "line": 174,
+      "parent": "If",
+      "mode": [
+        "truth"
+      ],
+      "selected_before": 12,
+      "selected_after": 0,
+      "simulated_saving": 25.454,
+      "newly_removed_tests": 12,
+      "checked": 12,
+      "complete": true,
+      "removed_failures": [],
+      "import_errors": [],
+      "setup_errors": [],
+      "error": null,
+      "wall_seconds": 34.17632695300017
+    },
+    {
+      "path": "sqlglot/__init__.py",
+      "line": 112,
+      "parent": "Call",
+      "mode": [
+        "return"
+      ],
+      "selected_before": 51,
+      "selected_after": 24,
+      "simulated_saving": 22.882,
+      "newly_removed_tests": 27,
+      "checked": 27,
+      "complete": true,
+      "removed_failures": [],
+      "import_errors": [],
+      "setup_errors": [],
+      "error": null,
+      "wall_seconds": 29.624218253000436
+    },
+    {
+      "path": "sqlglot/optimizer/pushdown_projections.py",
+      "line": 255,
+      "parent": "If",
+      "mode": [
+        "truth"
+      ],
+      "selected_before": 21,
+      "selected_after": 1,
+      "simulated_saving": 23.448,
+      "newly_removed_tests": 20,
+      "checked": 20,
+      "complete": true,
+      "removed_failures": [],
+      "import_errors": [],
+      "setup_errors": [],
+      "error": null,
+      "wall_seconds": 32.657126909
+    },
+    {
+      "path": "sqlglot/expressions/query.py",
+      "line": 1498,
+      "parent": "If",
+      "mode": [
+        "truth"
+      ],
+      "selected_before": 26,
+      "selected_after": 3,
+      "simulated_saving": 23.324,
+      "newly_removed_tests": 23,
+      "checked": 23,
+      "complete": true,
+      "removed_failures": [],
+      "import_errors": [],
+      "setup_errors": [],
+      "error": null,
+      "wall_seconds": 35.59049557399885
+    },
+    {
+      "path": "sqlglot/optimizer/optimize_joins.py",
+      "line": 109,
+      "parent": "If",
+      "mode": [
+        "truth"
+      ],
+      "selected_before": 11,
+      "selected_after": 2,
+      "simulated_saving": 23.009,
+      "newly_removed_tests": 9,
+      "checked": 9,
+      "complete": true,
+      "removed_failures": [],
+      "import_errors": [],
+      "setup_errors": [],
+      "error": null,
+      "wall_seconds": 32.62945033699907
+    },
+    {
+      "path": "sqlglot/optimizer/annotate_types.py",
+      "line": 716,
+      "parent": "If",
+      "mode": [
+        "truth"
+      ],
+      "selected_before": 34,
+      "selected_after": 4,
+      "simulated_saving": 22.854,
+      "newly_removed_tests": 30,
+      "checked": 30,
+      "complete": true,
+      "removed_failures": [],
+      "import_errors": [],
+      "setup_errors": [],
+      "error": null,
+      "wall_seconds": 34.91515955199975
+    }
+  ],
+  "completed_test_executions": 121,
+  "note": "Fresh independent Boolean edits. Comparisons are V5 versus V6 static schedules, not official leaderboard scores. Actual execution confirms every newly excluded test passed."
+}
