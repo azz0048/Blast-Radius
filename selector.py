@@ -299,6 +299,22 @@ class ImpactIndex:
                 selected.update(self.all)
         return selected
 
+def patched_files(index, root, text):
+    """{path: patched bytes} for every file the patch edits in place, or None if unsupported."""
+    try:
+        changes = {}
+        for change in parse_patch(text):
+            path = change.old
+            if path != change.new or path == '/dev/null':
+                return None
+            old = index.sources.get(path)
+            if old is None:
+                old = (root / path).read_text(encoding='utf-8')
+            changes[path] = apply_change(old, change).encode('utf-8')
+        return changes or None
+    except (OSError, UnicodeError, ValueError):
+        return None
+
 def schedule(selected, durations):
     if not selected:
         return []
@@ -343,9 +359,13 @@ def main():
         index = ImpactIndex(json.load(f), tests, usage, attributes, dictionary_data)
     durations = {t['number']: round(t['seconds'] * 1000) for t in tests}
     refiner = None
+    stand_in = None
+    started = time.monotonic()
     if not args.static and os.environ.get('BR_PROBE', '1') != '0' and args.source.is_dir():
         from refine import Refiner
         refiner = Refiner(args.source, index, tests)
+        from proxy import Proxy
+        stand_in = Proxy(refiner.prober, tests)
     count = 0
     for patch in sorted((args.data / 'commits').glob('*.patch')):
         try:
@@ -353,6 +373,8 @@ def main():
             selected = index.select(patch_text)
             if refiner is not None:
                 selected = refiner.refine(patch_text, selected)
+            if stand_in is not None and time.monotonic() - started < 150:
+                selected = stand_in.apply(patched_files(index, args.source, patch_text), selected)
         except Exception as error:
             print(f'Conservative fallback for {patch.name}: {type(error).__name__}', file=sys.stderr)
             selected = index.all

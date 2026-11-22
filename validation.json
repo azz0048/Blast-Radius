@@ -1,13 +1,13 @@
 {
   "exit_code": 0,
-  "cpu_seconds": 11.942875,
-  "wall_seconds": 12.070690700999876,
-  "peak_rss_kib": 601168,
+  "cpu_seconds": 23.420523,
+  "wall_seconds": 24.045491591999962,
+  "peak_rss_kib": 595396,
   "evaluation": {
     "ok": true,
-    "simulated_milliseconds": 150992,
+    "simulated_milliseconds": 134283,
     "missed_commits": []
   },
-  "output_bytes": 2112,
-  "environment": "Native Python 3.12.14; not a Docker run"
+  "output_bytes": 2117,
+  "environment": "Native Python 3.13.18; not a Docker run"
 }

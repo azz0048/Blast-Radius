@@ -1,3 +1,31 @@
+# Blast Radius v4
+
+v4 adds exact stand-ins for the slowest tests, which v3 kept whenever the baseline map flagged
+them (they are too slow to trial-run):
+
+| Test | Recorded | Stand-in | Stand-in cost |
+| --- | --- | --- | --- |
+| `test_execute_tpcds` | 21.5 s | TPC-DS fingerprint | ~4.5 s |
+| `test_execute_tpch`, `test_optimized_tpch` | 3.9 s, 3.5 s | TPC-H fingerprint | ~0.4 s |
+| `test_max_nodes` | 28.8 s | same assertions at 1/10 width, limits scaled by 1/10 | ~2.7 s |
+
+* **TPC executor tests** (`proxy.py`). Their outcome is a function of what sqlglot computes for the
+  fixture queries: the DuckDB SQL they are transpiled to, the parsed (pickled) and optimized trees,
+  the tables found, the plan, and the Python code generated for every plan step. In the patched
+  child these are hashed and compared with the pinned commit's hash, computed from the pinned
+  source while the image builds. Equal hashes remove the tests. Any patch touching the executor
+  runtime, planner, Python generator, helpers, schema, the test file, `tests/helpers.py` or the
+  TPC fixtures keeps them. The test module itself is imported first, so import breakage keeps them.
+* **test_max_nodes**. Node counts grow exactly with the width, so every limit is exceeded or not
+  exactly as in the full test; all other assertions are unchanged. Patches touching
+  `tests/test_parser.py` or `tests/helpers.py` keep it.
+
+Validation: 0 misses on the 30 sample commits (157.7 s simulated + CPU, v3: 165.2 s); the stand-ins
+never dropped a failing test on the sample (2jrq, 3utz keep `test_execute_tpcds`); 25 random
+mutations in optimizer/parser/generator/DuckDB code where the fingerprint was unchanged all passed
+the real executor tests; 14 random parser/tokenizer mutations agreed with the real `test_max_nodes`,
+and 4 crafted node-limit breakages were all kept.
+
 # Blast Radius v3
 
 This revision addresses two accuracy risks in v2: skipping an expensive test based on a different passing test, and failing to classify an error while importing an unchanged test module as a collection failure.
