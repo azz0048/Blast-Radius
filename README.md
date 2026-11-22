@@ -1,3 +1,25 @@
+# Blast Radius V6
+
+V6 is V5 plus exact checks for the slowest executor tests, which V5 keeps whenever its maps
+flag them (`test_execute_tpcds` 21.5 s, `test_execute_tpch`, `test_optimized_tpch`) and a
+scaled check for `test_max_nodes` (28.8 s). See `tpc.py`.
+
+* While the image builds, `tpc.py` records from the unchanged pinned source, per fixture query,
+  a hash of what the tests depend on (DuckDB SQL, parsed and optimized trees, plan, generated
+  Python), and which sqlglot functions each TPC-DS query runs (each profiled in a fresh process).
+* For a patch, only queries whose functions the patch edits are recomputed (any edit outside a
+  function body recomputes all). Queries with unchanged hashes behave as on the pinned commit.
+* Changed queries are run for real through the test module's own code (`mp_execute`,
+  `subtestHelper`, `cached_execute`) on the fixture data, loaded once with the test's own
+  `setUpClass`. A test is removed only when every changed query passes; patches touching the
+  executor, planner, Python generator, helpers, schema, the test file or its fixtures keep it.
+* `test_max_nodes` runs at one tenth of its width with every node limit scaled by the same factor.
+
+Validation: 30 sample commits, 0 misses (107.1 s total for V5 vs 111.9 s for V6 locally: the
+sample rarely selects these tests). On all 30 sample patches with the tests forced in, the checks
+never removed a failing test. In 10 random optimizer/generator/DuckDB mutations, the checks
+removed a test 27 times and the real test passed every time.
+
 # Blast Radius V5
 
 A baseline coverage selector with bounded execution of the current patch. It
